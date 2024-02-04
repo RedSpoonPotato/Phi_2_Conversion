@@ -13,8 +13,6 @@ import masking_utils
 # stuff to work on:
 """ stuff to work on:
 - testing everything
-- fix the bert LayerNorm and bert embedding
-- fix configs
 """
 
 def Flatten(x):
@@ -124,8 +122,10 @@ class PhiMLP(tf.Module):
         super().__init__(name)
         self.config = config
         self.activation_fn = NewGELU() # check this matches the actual model
-        self.fc1 = bert.Dense_v2(config.hidden_size, config.intermediate_size, params['fc1_weights'], params['fc1_bias'])
-        self.fc2 = bert.Dense_v2(config.intermediate_size, config.hidden_size, params['fc2_weights'], params['fc2_bias'])
+        self.fc1 = bert.Dense_v2(config.hidden_size, config.intermediate_size,
+                                  params['mlp_fc1_weight'], params['mlp_fc1_bias'])
+        self.fc2 = bert.Dense_v2(config.intermediate_size, config.hidden_size, 
+                                 params['mlp_fc2_weight'], params['mlp_fc2_bias'])
     def __call__(self, hidden_states):
         hidden_states = self.fc1(hidden_states)
         hidden_states = self.activation_fn(hidden_states) # also the function is stateless (consider changing)
@@ -173,18 +173,16 @@ class PhiAttention(tf.Module):
                 f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
                 f" and `num_heads`: {self.num_heads})."
             )
-        self.q_proj = bert.Dense_v2(self.hidden_size, self.num_heads * self.head_dim, params['q_weights'], params['q_bias'])
-        self.k_proj =bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, params['k_weights'], params['k_bias'])
-        self.v_proj = bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, params['v_weights'], params['v_bias'])
-        self.dense = bert.Dense_v2(self.num_heads * self.head_dim, self.hidden_size, params['dense_weights'], params['dense_bias'])
-        self.qk_layernorm = config.qk_layernorm
-        if self.qk_layernorm:
-            self.q_layernorm = bert.LayerNorm(
-                config.hidden_size // self.num_heads, eps=config.layer_norm_eps, elementwise_affine=True
-            )
-            self.k_layernorm = bert.LayerNorm(
-                config.hidden_size // self.num_heads, eps=config.layer_norm_eps, elementwise_affine=True
-            )
+        self.q_proj = bert.Dense_v2(self.hidden_size, self.num_heads * self.head_dim, params['q_proj_weight'], params['q_proj_bias'])
+        self.k_proj =bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, params['k_proj_weight'], params['k_proj_bias'])
+        self.v_proj = bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, params['v_proj_weight'], params['v_proj_bias'])
+        self.dense = bert.Dense_v2(self.num_heads * self.head_dim, self.hidden_size, params['dense_weight'], params['dense_bias'])
+        # self.qk_layernorm = config.qk_layernorm
+        # if self.qk_layernorm:
+        #     self.q_layernorm = bert.LayerNorm(
+        #         params['q_ln_weight'], params['q_ln_bias'], eps=config.layer_norm_eps)
+        #     self.k_layernorm = bert.LayerNorm(
+        #         params['k_ln_weight'], params['k_ln_bias'], eps=config.layer_norm_eps,)
         self._init_rope()
     def _init_rope(self):
         if self.config.rope_scaling is None:
@@ -319,11 +317,13 @@ PHI_ATTENTION_CLASSES = {
 }
 
 class PhiDecoderLayer(tf.Module):
-    def __init__(self, config: PhiConfig, layer_idx: int, name=None):
+    def __init__(self, config: PhiConfig, params, layer_idx: int, name=None):
         super().__init__(name)
-        self.self_attn = PHI_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx=layer_idx)
-        self.mlp = PhiMLP(config)
-        self.input_layernorm = bert.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.self_attn = PHI_ATTENTION_CLASSES[config._attn_implementation](config, params ,layer_idx=layer_idx)
+        self.mlp = PhiMLP(config, params)
+        self.input_layernorm = bert.LayerNorm(params['layernorm_weight'],
+                                              params['layernorm_bias'],
+                                              eps=config.layer_norm_eps)
 
     def forward(
         self,
@@ -364,14 +364,16 @@ class BaseModelOutputWithPast():
         self.attentions = attentions
 
 class PhiModel(tf.Module):
-    def __init__(self, config: PhiConfig, name=None):
+    def __init__(self, config: PhiConfig, params, name=None):
         super().__init__(name)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = bert.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.layers = [PhiDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
-        self.final_layernorm = bert.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.embed_tokens = bert.Embedding(config.vocab_size, config.hidden_size, params['embed_tokens'])
+        self.layers = [PhiDecoderLayer(config, params['decoder_layers'][layer_idx], layer_idx) 
+                       for layer_idx in range(config.num_hidden_layers)]
+        self.final_layernorm = bert.LayerNorm(params['final_layernorm_weight'], params['final_layernorm_bias'],
+                                               eps=config.layer_norm_eps)
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2" # should be False
 
     def forward(
@@ -488,11 +490,12 @@ class CausalLMOutputWithPast():
 
 class PhiForCausalLM(tf.Module):
     _tied_weights_keys = ["lm_head.weight"]
-    def __init__(self, config, params, name=None):
+    def __init__(self, config, params ,name=None):
         super().__init__(name)
-        self.model = PhiModel(config)
+        self.model = PhiModel(config, params)
         self.vocab_size = config.vocab_size
-        self.lm_head = bert.Dense_v2(config.hidden_size, config.vocab_size, params['weights'], params['bias'])
+        self.lm_head = bert.Dense_v2(config.hidden_size, config.vocab_size,
+                                      params['lm_head_weight'], params['lm_head_bias'])
     
     def forward(
         self,
