@@ -19,7 +19,22 @@ class Dense(tf.Module):
     @tf.function
     def __call__(self, x:tf.Tensor):
         out = tf.matmul(self.w , tf.transpose(x)) # out x 512
-        return tf.transpose(out) + self.b # 512 x out    
+        return tf.transpose(out) + self.b # 512 x out
+
+class Dense_v2(tf.Module):
+    def __init__(self, in_features:int, out_features:int, weights:tf.Tensor, bias:tf.Tensor=None, name=None):
+        super().__init__(name=name)
+        self.in_features = in_features
+        self.out_features = out_features
+        self.w = tf.reshape(weights, (in_features, out_features))
+        if bias is None:
+            self.b = tf.zeros([1, out_features])
+        else:
+            self.b = tf.reshape(bias, (1, out_features))
+    @tf.function
+    def __call__(self, x:tf.Tensor):
+        out = tf.matmul(x, self.w)
+        return out + self.b
 
 class SDP_Multi_Attention(tf.Module):
     def __init__(self, d_model:int, num_heads:int, dropout:float, 
