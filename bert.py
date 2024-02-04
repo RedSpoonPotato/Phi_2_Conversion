@@ -144,7 +144,7 @@ class Encoder(tf.Module):
             out = encoder(out, mask_2d)
         return out
 
-class Embedding(tf.Module):
+class Embedding_1d(tf.Module):
     def __init__(self, seq_len:int, d_model:int, embed_values:tf.Tensor, name=None):
         super().__init__(name)
         self.d_model = d_model
@@ -158,6 +158,25 @@ class Embedding(tf.Module):
             slice = tf.strided_slice(self.matrix, (indexes[i],0), (indexes[i]+1,self.d_model), (1,1))
             output = tf.concat([output, slice], 0)
         return output
+
+class Embedding(tf.Module):
+    def __init__(self, seq_len:int, d_model:int, embed_values:tf.Tensor, name=None):
+        super().__init__(name)
+        self.d_model = d_model
+        self.seq_len = seq_len
+        self.matrix = embed_values # 512 x 768
+    @tf.function
+    def __call__(self, indexes:tf.Tensor):
+        # assume indexes.shape is 2d (batch_size, seq_len)
+        output_3d = tf.zeros([1, indexes.shape[1], self.d_model]) # a dummy 3d slice to keep code neat (b/c of tf.concat)
+        for batch in range(indexes.shape[0]):
+          output_2d = tf.strided_slice(self.matrix, (indexes[batch][0],0), (indexes[batch][0]+1,self.d_model), (1,1))
+          for i in range(1, indexes.shape[1]):
+              slice = tf.strided_slice(self.matrix, (indexes[batch][i],0), (indexes[batch][i]+1,self.d_model), (1,1))
+              output_2d = tf.concat([output_2d, slice], 0)
+          output_2d = tf.expand_dims(output_2d, axis=0)
+          output_3d = tf.concat([output_3d, output_2d], 0)
+        return output_3d[1:]
         
 class BertEmbedding(tf.Module):
     def __init__(self, d_model:int, seq_len:int, vocab_size:int, max_seq_len:int, embeddings:dict, name=None):
