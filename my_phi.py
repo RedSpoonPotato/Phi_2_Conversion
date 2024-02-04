@@ -2,6 +2,9 @@ import bert
 import tensorflow as tf
 
 import math
+from typing import Optional, Union, Tuple, List
+
+import masking_utils
 
 
 # note: Instead of using register buffers, I am just using normal variables, but 
@@ -10,13 +13,8 @@ import math
 # stuff to work on:
 """ stuff to work on:
 - testing everything
-- check with actiavtion function is actually used (check in colab)
+- fix the bert LayerNorm and bert embedding
 - fix configs
-- replace all linear layers bert.dense_v2
-- THE config in PhiForTokenClassication --> if we change flash-atten to atten,
-will the output of the running model be good
-    -that does not neccesaeryily mean we should not eventually flash-attn
-    
 """
 
 def Flatten(x):
@@ -25,7 +23,7 @@ def Flatten(x):
         elements *= d
     return tf.reshape(x, (elements))
 
-def MY_get_unpad_data(attention_mask):
+def _get_unpad_data(attention_mask):
     assert(attention_mask.dtype == tf.int32)
     seqlens_in_batch = tf.cast(tf.math.reduce_sum(attention_mask, axis=-1), dtype=tf.int32)
     zero = tf.constant(0, dtype=tf.int32)
@@ -126,8 +124,8 @@ class PhiMLP(tf.Module):
         super().__init__(name)
         self.config = config
         self.activation_fn = NewGELU() # check this matches the actual model
-        self.fc1 = bert.Dense_v2(config.hidden_size, config.intermediate_size, params)
-        self.fc2 = bert.Dense_v2(config.intermediate_size, config.hidden_size, params)
+        self.fc1 = bert.Dense_v2(config.hidden_size, config.intermediate_size, params['fc1_weights'], params['fc1_bias'])
+        self.fc2 = bert.Dense_v2(config.intermediate_size, config.hidden_size, params['fc2_weights'], params['fc2_bias'])
     def __call__(self, hidden_states):
         hidden_states = self.fc1(hidden_states)
         hidden_states = self.activation_fn(hidden_states) # also the function is stateless (consider changing)
@@ -156,7 +154,7 @@ class PhiConfig():
 
 
 class PhiAttention(tf.Module):
-    def __init__(self, config: PhiConfig, layer_idx:int = None, name=None):
+    def __init__(self, config: PhiConfig, layer_idx:int = None, params=None, name=None):
         super().__init__(name)
         self.config = config
         self.layer_idx = layer_idx
@@ -175,10 +173,10 @@ class PhiAttention(tf.Module):
                 f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
                 f" and `num_heads`: {self.num_heads})."
             )
-        self.q_proj = bert.Dense_v2.(self.hidden_size, self.num_heads * self.head_dim, bias=True)
-        self.k_proj =bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
-        self.v_proj = bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
-        self.dense = bert.Dense_v2(self.num_heads * self.head_dim, self.hidden_size, bias=True)
+        self.q_proj = bert.Dense_v2(self.hidden_size, self.num_heads * self.head_dim, params['q_weights'], params['q_bias'])
+        self.k_proj =bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, params['k_weights'], params['k_bias'])
+        self.v_proj = bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, params['v_weights'], params['v_bias'])
+        self.dense = bert.Dense_v2(self.num_heads * self.head_dim, self.hidden_size, params['dense_weights'], params['dense_bias'])
         self.qk_layernorm = config.qk_layernorm
         if self.qk_layernorm:
             self.q_layernorm = bert.LayerNorm(
@@ -315,4 +313,238 @@ class PhiAttention(tf.Module):
 
 # for now, lets try without flash attention
 
+PHI_ATTENTION_CLASSES = {
+    "eager": PhiAttention,
+    # "flash_attention_2": PhiFlashAttention2,
+}
+
+class PhiDecoderLayer(tf.Module):
+    def __init__(self, config: PhiConfig, layer_idx: int, name=None):
+        super().__init__(name)
+        self.self_attn = PHI_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx=layer_idx)
+        self.mlp = PhiMLP(config)
+        self.input_layernorm = bert.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask = None,
+        position_ids = None,
+        output_attentions = False,
+        use_cache = False,
+        past_key_value = None,
+    ):
+        """
+        see orginal code for description
+        """
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states)
+        # Self Attention
+        attn_outputs, self_attn_weights, present_key_value = self.self_attn(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache)
+        feed_forward_hidden_states = self.mlp(hidden_states)
+        hidden_states = attn_outputs + feed_forward_hidden_states + residual
+        outputs = (hidden_states,)
+        if output_attentions:
+            outputs += (self_attn_weights,)
+        if use_cache:
+            outputs += (present_key_value,)
+        return outputs
+
+class BaseModelOutputWithPast():
+    def __init__(self, last_hidden_state, past_key_values, hidden_states, attentions):
+        self.last_hidden_sta = last_hidden_state
+        self.past_key_values = past_key_values
+        self.hidden_states = hidden_states
+        self.attentions = attentions
+
+class PhiModel(tf.Module):
+    def __init__(self, config: PhiConfig, name=None):
+        super().__init__(name)
+        self.padding_idx = config.pad_token_id
+        self.vocab_size = config.vocab_size
+
+        self.embed_tokens = bert.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.layers = [PhiDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+        self.final_layernorm = bert.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2" # should be False
+
+    def forward(
+        self,
+        input_ids = None,
+        attention_mask = None,
+        position_ids = None,
+        past_key_values = None,
+        inputs_embeds = None,
+        use_cache: bool = False, # for, as they are using a transformers construct
+        output_attentions: bool = None,
+        output_hidden_states: bool = None,
+        return_dict: bool = None,
+    ):
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # retrieve input_ids and inputs_embeds
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+        elif input_ids is not None:
+            batch_size, seq_length = input_ids.shape[:2]
+        elif inputs_embeds is not None:
+            batch_size, seq_length = inputs_embeds.shape[:2]
+        else:
+            raise ValueError("You have to specify either input_ids or inputs_embeds")
+
+        past_key_values_length = 0
+
+        # if use_cache:
+        #     use_legacy_cache = not isinstance(past_key_values, Cache)
+        #     if use_legacy_cache:
+        #         past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+        #     past_key_values_length = past_key_values.get_usable_length(seq_length)
+
+        if position_ids is None:
+            position_ids = tf.range(
+                past_key_values_length, seq_length + past_key_values_length, dtype=tf.int64)
+            position_ids = tf.expand_dims(position_ids, axis=0)
+
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_tokens(input_ids)
+
+        # Attention mask.
+        # if self._use_flash_attention_2: # should be False
+        #     # 2d mask is passed through the layers
+        #     attention_mask = attention_mask if (attention_mask is not None and 0 in attention_mask) else None
+        # else
+            
+        # 4d mask is passed through the layers
+        attention_mask = masking_utils._prepare_4d_causal_attention_mask(
+            attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+        )
+
+        hidden_states = inputs_embeds
+
+        # decoder layers
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attns = () if output_attentions else None
+        next_decoder_cache = None
+
+        for decoder_layer in self.layers:
+            if output_hidden_states:
+                all_hidden_states += (hidden_states,)
+
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_values,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+            )
+
+            hidden_states = layer_outputs[0]
+
+            if use_cache:
+                next_decoder_cache = layer_outputs[2 if output_attentions else 1]
+
+            if output_attentions:
+                all_self_attns += (layer_outputs[1],)
+
+        hidden_states = self.final_layernorm(hidden_states)
+
+        # add hidden states from the last decoder layer
+        if output_hidden_states:
+            all_hidden_states += (hidden_states,)
+
+        next_cache = None
+        if use_cache:
+            next_cache = next_decoder_cache.to_legacy_cache() if use_legacy_cache else next_decoder_cache
+        if not return_dict:
+            return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
+        
+        return BaseModelOutputWithPast(
+            last_hidden_state=hidden_states,
+            past_key_values=next_cache,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attns,
+        )
+
+class CausalLMOutputWithPast():
+    def __init__(self, logits, past_key_values, hidden_states, attentions):
+        self.logits = logits
+        self.past_key_values = past_key_values
+        self.hidden_states = hidden_states
+        self.attentions = attentions
+
+
+class PhiForCausalLM(tf.Module):
+    _tied_weights_keys = ["lm_head.weight"]
+    def __init__(self, config, params, name=None):
+        super().__init__(name)
+        self.model = PhiModel(config)
+        self.vocab_size = config.vocab_size
+        self.lm_head = bert.Dense_v2(config.hidden_size, config.vocab_size, params['weights'], params['bias'])
+    
+    def forward(
+        self,
+        input_ids = None,
+        attention_mask = None,
+        position_ids = None,
+        past_key_values: Optional[List] = None,
+        inputs_embeds = None,
+        labels = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ):
+        r"""
+        Args:
+            labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
+                config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
+                (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
+        ```"""
+
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        hidden_states = outputs[0]
+        logits = self.lm_head(hidden_states)
+        logits = tf.cast(logits, dtype=tf.float32) # maybe should be 64
+
+        if not return_dict:
+            return (logits,) + outputs[1:]
+
+        return CausalLMOutputWithPast(
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
 
