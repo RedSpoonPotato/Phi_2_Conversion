@@ -154,7 +154,7 @@ class PhiConfig():
 
 
 class PhiAttention(tf.Module):
-    def __init__(self, config: PhiConfig, layer_idx:int = None, params=None, name=None):
+    def __init__(self, config: PhiConfig, params, layer_idx:int = None, name=None):
         super().__init__(name)
         self.config = config
         self.layer_idx = layer_idx
@@ -210,7 +210,7 @@ class PhiAttention(tf.Module):
                 )
             else:
                 raise ValueError(f"Unknown RoPE scaling type {scaling_type}")
-    def forward(
+    def __call__(
         self,
         hidden_states,
         attention_mask = None,
@@ -325,7 +325,7 @@ class PhiDecoderLayer(tf.Module):
                                               params['layernorm_bias'],
                                               eps=config.layer_norm_eps)
 
-    def forward(
+    def __call__(
         self,
         hidden_states,
         attention_mask = None,
@@ -376,7 +376,7 @@ class PhiModel(tf.Module):
                                                eps=config.layer_norm_eps)
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2" # should be False
 
-    def forward(
+    def __call__(
         self,
         input_ids = None,
         attention_mask = None,
@@ -497,7 +497,7 @@ class PhiForCausalLM(tf.Module):
         self.lm_head = bert.Dense_v2(config.hidden_size, config.vocab_size,
                                       params['lm_head_weight'], params['lm_head_bias'])
     
-    def forward(
+    def __call__(
         self,
         input_ids = None,
         attention_mask = None,
