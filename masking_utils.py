@@ -137,8 +137,8 @@ class AttentionMaskConverter:
         """
         bsz, tgt_len = input_ids_shape
         mask = tf.fill((tgt_len, tgt_len), dtype.min)
-        mask_cond = tf.range(mask.size(-1))
-        mask = mask_fill(mask, tf.cast(tf.reshape(mask_cond < (mask_cond + 1), [mask.size(-1), 1]), tf.float32), 0)
+        mask_cond = tf.range(mask.shape[-1])
+        mask = mask_fill(mask, tf.cast(tf.reshape(mask_cond < (mask_cond + 1), [mask.shape[-1], 1]), tf.float16), 0)
 
         mask = tf.cast(mask, dtype=dtype) # probably uneeded, but would need ot test
 
@@ -299,7 +299,7 @@ def _prepare_4d_causal_attention_mask(
         else:
             # if the 4D mask has correct shape - invert it and fill with negative infinity
             inverted_mask = 1.0 - attention_mask
-            attention_mask = mask_fill(inverted_mask, tf.cast(tf.cast(inverted_mask,tf.bool),tf.float32), inputs_embeds.dtype.min)
+            attention_mask = mask_fill(inverted_mask, tf.cast(tf.cast(inverted_mask,tf.bool),tf.float16), inputs_embeds.dtype.min)
     else:
         attention_mask = attn_mask_converter.to_causal_4d(
             input_shape[0], input_shape[-1], key_value_length, dtype=inputs_embeds.dtype,

@@ -168,7 +168,7 @@ class Embedding(tf.Module):
     @tf.function
     def __call__(self, indexes:tf.Tensor):
         # assume indexes.shape is 2d (batch_size, seq_len)
-        output_3d = tf.zeros([1, indexes.shape[1], self.d_model]) # a dummy 3d slice to keep code neat (b/c of tf.concat)
+        output_3d = tf.zeros([1, indexes.shape[1], self.d_model], dtype=tf.float16) # a dummy 3d slice to keep code neat (b/c of tf.concat)
         for batch in range(indexes.shape[0]):
           output_2d = tf.strided_slice(self.matrix, (indexes[batch][0],0), (indexes[batch][0]+1,self.d_model), (1,1))
           for i in range(1, indexes.shape[1]):

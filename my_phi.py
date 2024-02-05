@@ -177,7 +177,7 @@ class PhiAttention(tf.Module):
         self.k_proj =bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, params['k_proj_weight'], params['k_proj_bias'])
         self.v_proj = bert.Dense_v2(self.hidden_size, self.num_key_value_heads * self.head_dim, params['v_proj_weight'], params['v_proj_bias'])
         self.dense = bert.Dense_v2(self.num_heads * self.head_dim, self.hidden_size, params['dense_weight'], params['dense_bias'])
-        # self.qk_layernorm = config.qk_layernorm
+        self.qk_layernorm = config.qk_layernorm
         # if self.qk_layernorm:
         #     self.q_layernorm = bert.LayerNorm(
         #         params['q_ln_weight'], params['q_ln_bias'], eps=config.layer_norm_eps)
@@ -231,9 +231,9 @@ class PhiAttention(tf.Module):
         query_states =  tf.reshape(query_states,[bsz, q_len, self.num_heads,           self.head_dim])
         key_states =    tf.reshape(key_states,  [bsz, q_len, self.num_key_value_heads, self.head_dim])
         value_states =  tf.reshape(value_states,[bsz, q_len, self.num_key_value_heads, self.head_dim])
-        query_states =  tf.transpose(query_states,  perm=[1, 2])
-        key_states =    tf.transpose(key_states,    perm=[1, 2])
-        value_states =  tf.transpose(value_states,  perm=[1, 2])
+        query_states =  tf.transpose(query_states,  perm=[0, 1, 2, 3])
+        key_states =    tf.transpose(key_states,    perm=[0, 1, 2, 3])
+        value_states =  tf.transpose(value_states,  perm=[0, 1, 2, 3])
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
@@ -273,7 +273,7 @@ class PhiAttention(tf.Module):
         # Queries and keys upcast to fp32 is required by Phi-2 to avoid overflow
         attn_weights = tf.matmul(
             tf.cast(query_states, dtype=tf.float32), 
-            tf.transpose(tf.cast(key_states, dtype=tf.float32), perm=(2,3))
+            tf.transpose(tf.cast(key_states, dtype=tf.float32), perm=(0, 1, 3, 2))
         ) / math.sqrt(self.head_dim)
 
         if attn_weights.shape != (bsz, self.num_heads, q_len, kv_seq_len):
@@ -300,7 +300,7 @@ class PhiAttention(tf.Module):
                 f" {attn_output.size()}"
             )
 
-        attn_output = tf.transpose(attn_output, perm=(1,2))
+        attn_output = tf.transpose(attn_output, perm=(0, 2, 1))
         attn_output = tf.reshape(attn_output, (bsz, q_len, self.hidden_size))
         attn_output = self.dense(attn_output)
 
