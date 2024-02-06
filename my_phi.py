@@ -232,9 +232,9 @@ class PhiAttention(tf.Module):
         query_states =  tf.reshape(query_states,[bsz, q_len, self.num_heads,           self.head_dim])
         key_states =    tf.reshape(key_states,  [bsz, q_len, self.num_key_value_heads, self.head_dim])
         value_states =  tf.reshape(value_states,[bsz, q_len, self.num_key_value_heads, self.head_dim])
-        query_states =  tf.transpose(query_states,  perm=[0, 1, 2, 3])
-        key_states =    tf.transpose(key_states,    perm=[0, 1, 2, 3])
-        value_states =  tf.transpose(value_states,  perm=[0, 1, 2, 3])
+        query_states =  tf.transpose(query_states,  perm=[0, 2, 1, 3])
+        key_states =    tf.transpose(key_states,    perm=[0, 2, 1, 3])
+        value_states =  tf.transpose(value_states,  perm=[0, 2, 1, 3])
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
