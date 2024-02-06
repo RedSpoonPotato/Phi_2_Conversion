@@ -55,7 +55,7 @@ class PhiRotaryEmbedding(tf.Module):
             self._set_cos_sin_cache(seq_len=seq_len, dtype=x.dtype)
         return (
             tf.cast(self.cos_cached[:seq_len], dtype=x.dtype),
-            tf.cast(self.cos_cached[:seq_len], dtype=x.dtype),
+            tf.cast(self.sin_cached[:seq_len], dtype=x.dtype),
         )
 
 class PhiLinearScalingRotaryEmbedding(PhiRotaryEmbedding):
