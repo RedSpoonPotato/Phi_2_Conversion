@@ -288,7 +288,7 @@ class PhiAttention(tf.Module):
                 raise ValueError(
                     f"Attention mask should be of size {(bsz, 1, q_len, kv_seq_len)}, but is {attention_mask.size()}"
                 )
-            attn_weights = attn_weights + attention_mask
+            attn_weights = attn_weights + tf.cast(attention_mask, dtype=tf.float32)
 
         # upcast attention to fp32
         attn_weights = tf.cast(tf.nn.softmax(tf.cast(attn_weights, dtype=tf.float32), axis=-1), dtype=value_states.dtype)
