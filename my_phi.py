@@ -41,6 +41,7 @@ class PhiRotaryEmbedding(tf.Module):
         self.max_position_embeddings = max_position_embeddings
         self.base = base
         self.inv_freq = 1.0 / (self.base ** (tf.cast((tf.range(0, self.dim, 2)), dtype=tf.float32) / self.dim))
+        self._set_cos_sin_cache(max_position_embeddings, dtype=tf.float16)
     def _set_cos_sin_cache(self, seq_len, dtype):
         self.max_seq_len_cached = seq_len
         t = tf.range(self.max_seq_len_cached, dtype=self.inv_freq.dtype)
