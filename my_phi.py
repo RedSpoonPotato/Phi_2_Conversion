@@ -301,7 +301,7 @@ class PhiAttention(tf.Module):
                 f" {attn_output.size()}"
             )
 
-        attn_output = tf.transpose(attn_output, perm=(0, 2, 1))
+        attn_output = tf.transpose(attn_output, perm=(0, 2, 1, 3))
         attn_output = tf.reshape(attn_output, (bsz, q_len, self.hidden_size))
         attn_output = self.dense(attn_output)
 
