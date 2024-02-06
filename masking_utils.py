@@ -138,7 +138,8 @@ class AttentionMaskConverter:
         bsz, tgt_len = input_ids_shape
         mask = tf.fill((tgt_len, tgt_len), dtype.min)
         mask_cond = tf.range(mask.shape[-1])
-        mask = mask_fill(mask, tf.cast(tf.reshape(mask_cond < (mask_cond + 1), [mask.shape[-1], 1]), tf.float16), 0)
+        mask = mask_fill(mask, tf.cast(mask_cond < tf.reshape(mask_cond + 1, [mask.shape[-1], 1]), tf.float16), 0)
+        
 
         mask = tf.cast(mask, dtype=dtype) # probably uneeded, but would need ot test
 
