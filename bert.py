@@ -91,11 +91,12 @@ class LayerNorm(tf.Module):
         self.biases = biases
         self.eps = eps
     @tf.function
-    def __call__(self, input):
-        # input is 2d (batch of 1)
-        mean = tf.math.reduce_mean(input, axis=-1, keepdims=True) # (512, 1) i think
-        std = tf.math.reduce_std(input, axis=-1, keepdims=True)
-        return self.weights * (input - mean) / (std + self.eps) + self.biases
+    def __call__(self, x):
+        mean = tf.reduce_mean(x, axis=-1, keepdims=True)
+        variance = tf.reduce_mean(tf.square(x - mean), axis=-1, keepdims=True)
+        x = (x - mean) / tf.sqrt(variance + self.eps)
+        x = self.weights * x + self.biases
+        return x
 
 class EncoderBlock(tf.Module):
     def __init__(self, d_model:int, seq_len:int, d_hidden:int, num_heads:int, dropout:float, weights:dict, 
