@@ -359,7 +359,7 @@ class PhiDecoderLayer(tf.Module):
 
 class BaseModelOutputWithPast():
     def __init__(self, last_hidden_state, past_key_values, hidden_states, attentions):
-        self.last_hidden_sta = last_hidden_state
+        self.last_hidden_state= last_hidden_state
         self.past_key_values = past_key_values
         self.hidden_states = hidden_states
         self.attentions = attentions
@@ -539,7 +539,8 @@ class PhiForCausalLM(tf.Module):
             return_dict=return_dict,
         )
 
-        hidden_states = outputs[0]
+        # hidden_states = outputs[0]
+        hidden_states = outputs.last_hidden_state
         logits = self.lm_head(hidden_states)
         logits = tf.cast(logits, dtype=tf.float32) # maybe should be 64
 
