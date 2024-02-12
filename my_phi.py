@@ -1,5 +1,6 @@
 import bert
 import tensorflow as tf
+from cache import Cache, DynamicCache
 
 import math
 from typing import Optional, Union, Tuple, List
@@ -238,7 +239,6 @@ class PhiAttention(tf.Module):
 
         kv_seq_len = key_states.shape[-2]
         if past_key_value is not None:
-            print("Error!") # for now
             if self.layer_idx is None:
                 raise ValueError(
                     f"The cache structure has changed since version v4.36. If you are using {self.__class__.__name__} "
@@ -409,11 +409,11 @@ class PhiModel(tf.Module):
 
         past_key_values_length = 0
 
-        # if use_cache:
-        #     use_legacy_cache = not isinstance(past_key_values, Cache)
-        #     if use_legacy_cache:
-        #         past_key_values = DynamicCache.from_legacy_cache(past_key_values)
-        #     past_key_values_length = past_key_values.get_usable_length(seq_length)
+        if use_cache:
+            use_legacy_cache = not isinstance(past_key_values, Cache)
+            if use_legacy_cache:
+                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+            past_key_values_length = past_key_values.get_usable_length(seq_length)
 
         if position_ids is None:
             position_ids = tf.range(
@@ -551,4 +551,60 @@ class PhiForCausalLM(tf.Module):
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+    # create the prepare_inputs_for_generation() 
+    def prepare_inputs_for_generation(
+        self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
+    ):
+        if past_key_values is not None:
+            if isinstance(past_key_values, Cache):
+                cache_length = past_key_values.get_seq_length()
+                past_length = past_key_values.seen_tokens
+                max_cache_length = past_key_values.get_max_length()
+            else:
+                cache_length = past_length = past_key_values[0][0].shape[2]
+                max_cache_length = None
 
+            # Keep only the unprocessed tokens:
+            # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
+            # some of the inputs are exclusively passed as part of the cache (e.g. when passing input_embeds as
+            # input)
+            if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
+                input_ids = input_ids[:, -(attention_mask.shape[1] - past_length) :]
+            # 2 - If the past_length is smaller than input_ids', then input_ids holds all input tokens. We can discard
+            # input_ids based on the past_length.
+            elif past_length < input_ids.shape[1]:
+                input_ids = input_ids[:, past_length:]
+            # 3 - Otherwise (past_length >= input_ids.shape[1]), let's assume input_ids only has unprocessed tokens.
+
+            # If we are about to go beyond the maximum cache length, we need to crop the input attention mask.
+            if (
+                max_cache_length is not None
+                and attention_mask is not None
+                and cache_length + input_ids.shape[1] > max_cache_length
+            ):
+                attention_mask = attention_mask[:, -max_cache_length:]
+
+        position_ids = kwargs.get("position_ids", None)
+        if attention_mask is not None and position_ids is None:
+            # create position_ids on the fly for batch generation
+            position_ids = tf.cumsum(tf.cast(attention_mask, dtype=tf.int64), axis=-1) - 1
+            position_ids = masking_utils.mask_fill(position_ids, tf.cast(attention_mask == 0, tf.int32), 1)
+
+            if past_key_values:
+                position_ids = position_ids[:, -input_ids.shape[1] :]
+
+        # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
+        if inputs_embeds is not None and past_key_values is None:
+            model_inputs = {"inputs_embeds": inputs_embeds}
+        else:
+            model_inputs = {"input_ids": input_ids}
+
+        model_inputs.update(
+            {
+                "position_ids": position_ids,
+                "past_key_values": past_key_values,
+                "use_cache": kwargs.get("use_cache"),
+                "attention_mask": attention_mask,
+            }
+        )
+        return model_inputs
