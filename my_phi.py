@@ -431,7 +431,8 @@ class PhiModel(tf.Module):
             
         # 4d mask is passed through the layers
         attention_mask = masking_utils._prepare_4d_causal_attention_mask(
-            attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+            tf.cast(attention_mask, dtype=inputs_embeds.dtype), (batch_size, seq_length), 
+            inputs_embeds, past_key_values_length
         )
 
         hidden_states = inputs_embeds
