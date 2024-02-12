@@ -1,6 +1,6 @@
 import bert
 import tensorflow as tf
-from cache import Cache, DynamicCache
+import cache
 
 import math
 from typing import Optional, Union, Tuple, List
@@ -410,9 +410,9 @@ class PhiModel(tf.Module):
         past_key_values_length = 0
 
         if use_cache:
-            use_legacy_cache = not isinstance(past_key_values, Cache)
+            use_legacy_cache = not isinstance(past_key_values, cache.Cache)
             if use_legacy_cache:
-                past_key_values = DynamicCache.from_legacy_cache(past_key_values)
+                past_key_values = cache.DynamicCache.from_legacy_cache(past_key_values)
             past_key_values_length = past_key_values.get_usable_length(seq_length)
 
         if position_ids is None:
@@ -556,7 +556,7 @@ class PhiForCausalLM(tf.Module):
         self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
     ):
         if past_key_values is not None:
-            if isinstance(past_key_values, Cache):
+            if isinstance(past_key_values, cache.Cache):
                 cache_length = past_key_values.get_seq_length()
                 past_length = past_key_values.seen_tokens
                 max_cache_length = past_key_values.get_max_length()
