@@ -417,7 +417,7 @@ class PhiModel(tf.Module):
 
         if position_ids is None:
             position_ids = tf.range(
-                past_key_values_length, seq_length + past_key_values_length, dtype=tf.int64)
+                past_key_values_length, seq_length + past_key_values_length, dtype=tf.int32)
             position_ids = tf.expand_dims(position_ids, axis=0)
 
         if inputs_embeds is None:
@@ -588,8 +588,8 @@ class PhiForCausalLM(tf.Module):
         position_ids = kwargs.get("position_ids", None)
         if attention_mask is not None and position_ids is None:
             # create position_ids on the fly for batch generation
-            position_ids = tf.cumsum(tf.cast(attention_mask, dtype=tf.int64), axis=-1) - 1
-            position_ids = masking_utils.mask_fill(position_ids, tf.cast(attention_mask == 0, tf.int64), 1)
+            position_ids = tf.cumsum(tf.cast(attention_mask, dtype=tf.int32), axis=-1) - 1
+            position_ids = masking_utils.mask_fill(position_ids, tf.cast(attention_mask == 0, tf.int32), 1)
 
             if past_key_values:
                 position_ids = position_ids[:, -input_ids.shape[1] :]
