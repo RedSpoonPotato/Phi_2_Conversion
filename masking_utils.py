@@ -166,7 +166,7 @@ class AttentionMaskConverter:
         expanded_mask = tf.cast(expanded_mask, dtype=dtype)
 
         inverted_mask = 1.0 - expanded_mask
-        return mask_fill(inverted_mask, tf.cast(tf.cast(inverted_mask, tf.bool), tf.int32), dtype.min)
+        return mask_fill(inverted_mask, tf.cast(tf.cast(inverted_mask, tf.bool), inverted_mask.dtype), dtype.min)
         
 
     @staticmethod
