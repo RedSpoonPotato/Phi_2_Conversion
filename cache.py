@@ -152,7 +152,7 @@ class DynamicCache(Cache):
         return None
 
     
-    def reorder_cache(self, beam_idx: tf.LongTensor):
+    def reorder_cache(self, beam_idx: tf.Tensor):
         """Reorders the cache for beam search, given the selected beam indices."""
         for layer_idx in range(len(self.key_cache)):
             self.key_cache[layer_idx] = tf_index_select(self.key_cache[layer_idx], 0, beam_idx)
